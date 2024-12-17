@@ -1,58 +1,38 @@
 package com.zionhuang.music.viewmodels
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import android.content.Context
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import androidx.lifecycle.viewmodel.CreationExtras
-import androidx.paging.*
 import com.zionhuang.innertube.YouTube
-import com.zionhuang.innertube.models.BrowseEndpoint
-import com.zionhuang.innertube.models.NavigationEndpoint
-import com.zionhuang.innertube.models.SongItem
-import com.zionhuang.innertube.models.YTBaseItem
-import com.zionhuang.music.repos.YouTubeRepository
-import kotlinx.coroutines.Dispatchers.IO
-import kotlinx.coroutines.withContext
+import com.zionhuang.innertube.pages.BrowseResult
+import com.zionhuang.music.constants.HideExplicitKey
+import com.zionhuang.music.utils.dataStore
+import com.zionhuang.music.utils.get
+import com.zionhuang.music.utils.reportException
+import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
-class YouTubeBrowseViewModel(application: Application, private val browseEndpoint: BrowseEndpoint) : AndroidViewModel(application) {
-    private var albumSongs: List<SongItem>? = null
-    fun getAlbumSongs() = albumSongs
+@HiltViewModel
+class YouTubeBrowseViewModel @Inject constructor(
+    @ApplicationContext context: Context,
+    savedStateHandle: SavedStateHandle,
+) : ViewModel() {
+    private val browseId = savedStateHandle.get<String>("browseId")!!
+    private val params = savedStateHandle.get<String>("params")
 
-    val pagingData = Pager(PagingConfig(pageSize = 20)) {
-        if (browseEndpoint.isAlbumEndpoint) {
-            object : PagingSource<List<String>, YTBaseItem>() {
-                override suspend fun load(params: LoadParams<List<String>>): LoadResult<List<String>, YTBaseItem> = withContext(IO) {
-                    YouTube.browse(browseEndpoint).map { result ->
-                        LoadResult.Page<List<String>, YTBaseItem>(
-                            data = result.items.also { items ->
-                                albumSongs = items.filterIsInstance<SongItem>().map {
-                                    // replaced album audio items have inappropriate navigation endpoint, so we remove it and let clicking handled by fragment
-                                    it.copy(navigationEndpoint = NavigationEndpoint())
-                                }
-                            },
-                            prevKey = null,
-                            nextKey = null
-                        )
-                    }.getOrElse { throwable ->
-                        LoadResult.Error(throwable)
-                    }
-                }
+    val result = MutableStateFlow<BrowseResult?>(null)
 
-                override fun getRefreshKey(state: PagingState<List<String>, YTBaseItem>): List<String>? = null
+    init {
+        viewModelScope.launch {
+            YouTube.browse(browseId, params).onSuccess {
+                result.value = it.filterExplicit(context.dataStore.get(HideExplicitKey, false))
+            }.onFailure {
+                reportException(it)
             }
-        } else {
-            YouTubeRepository.browse(browseEndpoint)
         }
-    }.flow.cachedIn(viewModelScope)
-}
-
-class YouTubeBrowseViewModelFactory(
-    val application: Application,
-    private val browseEndpoint: BrowseEndpoint,
-) : ViewModelProvider.AndroidViewModelFactory(application) {
-    @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T =
-        YouTubeBrowseViewModel(application, browseEndpoint) as T
+    }
 }

@@ -1,59 +1,114 @@
 package com.zionhuang.music
 
 import android.app.Application
+import android.os.Build
 import android.widget.Toast
 import android.widget.Toast.LENGTH_SHORT
-import androidx.core.content.edit
+import androidx.datastore.preferences.core.edit
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+import coil.disk.DiskCache
 import com.zionhuang.innertube.YouTube
-import com.zionhuang.innertube.models.YouTubeClient
 import com.zionhuang.innertube.models.YouTubeLocale
-import com.zionhuang.music.extensions.getEnum
-import com.zionhuang.music.extensions.sharedPreferences
+import com.zionhuang.kugou.KuGou
+import com.zionhuang.music.constants.ContentCountryKey
+import com.zionhuang.music.constants.ContentLanguageKey
+import com.zionhuang.music.constants.CountryCodeToName
+import com.zionhuang.music.constants.InnerTubeCookieKey
+import com.zionhuang.music.constants.LanguageCodeToName
+import com.zionhuang.music.constants.MaxImageCacheSizeKey
+import com.zionhuang.music.constants.ProxyEnabledKey
+import com.zionhuang.music.constants.ProxyTypeKey
+import com.zionhuang.music.constants.ProxyUrlKey
+import com.zionhuang.music.constants.SYSTEM_DEFAULT
+import com.zionhuang.music.constants.UseLoginForBrowse
+import com.zionhuang.music.constants.VisitorDataKey
+import com.zionhuang.music.extensions.toEnum
 import com.zionhuang.music.extensions.toInetSocketAddress
-import com.zionhuang.music.playback.MediaSessionConnection
+import com.zionhuang.music.utils.dataStore
+import com.zionhuang.music.utils.get
+import com.zionhuang.music.utils.reportException
+import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import timber.log.Timber
 import java.net.Proxy
-import java.util.*
+import java.util.Locale
 
-class App : Application() {
+@HiltAndroidApp
+class App : Application(), ImageLoaderFactory {
+    @OptIn(DelicateCoroutinesApi::class)
     override fun onCreate() {
         super.onCreate()
-        INSTANCE = this
+        Timber.plant(Timber.DebugTree())
 
-        val systemDefault = getString(R.string.default_localization_key)
         val locale = Locale.getDefault()
         val languageTag = locale.toLanguageTag().replace("-Hant", "") // replace zh-Hant-* to zh-*
-        val languageCodes = resources.getStringArray(R.array.language_codes)
         YouTube.locale = YouTubeLocale(
-            gl = sharedPreferences.getString(getString(R.string.pref_content_country), systemDefault).takeIf { it != systemDefault }
-                ?: locale.country,
-            hl = sharedPreferences.getString(getString(R.string.pref_content_language), systemDefault).takeIf { it != systemDefault }
-                ?: if (locale.language in languageCodes) locale.language
-                else if (languageTag in languageCodes) languageTag
-                else "en"
+            gl = dataStore[ContentCountryKey]?.takeIf { it != SYSTEM_DEFAULT }
+                ?: locale.country.takeIf { it in CountryCodeToName }
+                ?: "US",
+            hl = dataStore[ContentLanguageKey]?.takeIf { it != SYSTEM_DEFAULT }
+                ?: locale.language.takeIf { it in LanguageCodeToName }
+                ?: languageTag.takeIf { it in LanguageCodeToName }
+                ?: "en"
         )
+        if (languageTag == "zh-TW") {
+            KuGou.useTraditionalChinese = true
+        }
 
-        if (sharedPreferences.getBoolean(getString(R.string.pref_proxy_enabled), false)) {
+        if (dataStore[ProxyEnabledKey] == true) {
             try {
-                val socketAddress = sharedPreferences.getString(getString(R.string.pref_proxy_url), "")!!.toInetSocketAddress()
                 YouTube.proxy = Proxy(
-                    sharedPreferences.getEnum(getString(R.string.pref_proxy_type), Proxy.Type.HTTP),
-                    socketAddress
+                    dataStore[ProxyTypeKey].toEnum(defaultValue = Proxy.Type.HTTP),
+                    dataStore[ProxyUrlKey]!!.toInetSocketAddress()
                 )
             } catch (e: Exception) {
                 Toast.makeText(this, "Failed to parse proxy url.", LENGTH_SHORT).show()
-                e.printStackTrace()
+                reportException(e)
             }
         }
 
-        YouTube.visitorData = sharedPreferences.getString(getString(R.string.pref_visitor_data), null) ?: YouTubeClient.generateVisitorData().also {
-            sharedPreferences.edit {
-                putString(getString(R.string.pref_visitor_data), it)
-            }
+        if (dataStore[UseLoginForBrowse] == true) {
+            YouTube.useLoginForBrowse = true
         }
-        MediaSessionConnection.connect(this)
+
+        GlobalScope.launch {
+            dataStore.data
+                .map { it[VisitorDataKey] }
+                .distinctUntilChanged()
+                .collect { visitorData ->
+                    YouTube.visitorData = visitorData
+                        ?.takeIf { it != "null" } // Previously visitorData was sometimes saved as "null" due to a bug
+                        ?: YouTube.visitorData().getOrNull()?.also { newVisitorData ->
+                            dataStore.edit { settings ->
+                                settings[VisitorDataKey] = newVisitorData
+                            }
+                        } ?: YouTube.DEFAULT_VISITOR_DATA
+                }
+        }
+        GlobalScope.launch {
+            dataStore.data
+                .map { it[InnerTubeCookieKey] }
+                .distinctUntilChanged()
+                .collect { cookie ->
+                    YouTube.cookie = cookie
+                }
+        }
     }
 
-    companion object {
-        lateinit var INSTANCE: App
-    }
+    override fun newImageLoader() = ImageLoader.Builder(this)
+        .crossfade(true)
+        .respectCacheHeaders(false)
+        .allowHardware(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+        .diskCache(
+            DiskCache.Builder()
+                .directory(cacheDir.resolve("coil"))
+                .maxSizeBytes((dataStore[MaxImageCacheSizeKey] ?: 512) * 1024 * 1024L)
+                .build()
+        )
+        .build()
 }

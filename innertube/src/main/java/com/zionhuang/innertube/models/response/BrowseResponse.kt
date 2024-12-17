@@ -1,6 +1,16 @@
 package com.zionhuang.innertube.models.response
 
-import com.zionhuang.innertube.models.*
+import com.zionhuang.innertube.models.Button
+import com.zionhuang.innertube.models.Continuation
+import com.zionhuang.innertube.models.GridRenderer
+import com.zionhuang.innertube.models.Menu
+import com.zionhuang.innertube.models.MusicShelfRenderer
+import com.zionhuang.innertube.models.ResponseContext
+import com.zionhuang.innertube.models.Runs
+import com.zionhuang.innertube.models.SectionListRenderer
+import com.zionhuang.innertube.models.Tabs
+import com.zionhuang.innertube.models.ThumbnailRenderer
+import com.zionhuang.innertube.models.Thumbnails
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -10,44 +20,37 @@ data class BrowseResponse(
     val header: Header?,
     val microformat: Microformat?,
     val responseContext: ResponseContext,
+    val background: MusicThumbnailRenderer?,
 ) {
-    fun toBrowseResult(): BrowseResult = when {
-        continuationContents != null -> when {
-            continuationContents.sectionListContinuation != null -> BrowseResult(
-                items = continuationContents.sectionListContinuation.contents.flatMap { it.toBaseItems() },
-                urlCanonical = microformat?.microformatDataRenderer?.urlCanonical,
-                continuations = continuationContents.sectionListContinuation.continuations?.getContinuations()
-            )
-            continuationContents.musicPlaylistShelfContinuation != null -> BrowseResult(
-                items = continuationContents.musicPlaylistShelfContinuation.contents.mapNotNull { it.toItem() },
-                urlCanonical = microformat?.microformatDataRenderer?.urlCanonical,
-                continuations = continuationContents.musicPlaylistShelfContinuation.continuations?.getContinuations()
-            )
-            else -> throw UnsupportedOperationException("Unknown continuation type")
-        }
-        contents != null -> BrowseResult(
-            items = contents.singleColumnBrowseResultsRenderer!!.tabs[0].tabRenderer.content!!.sectionListRenderer!!.contents.flatMap { it.toBaseItems() },
-            urlCanonical = microformat?.microformatDataRenderer?.urlCanonical,
-            continuations = contents.singleColumnBrowseResultsRenderer.tabs[0].tabRenderer.content!!.sectionListRenderer!!.contents[0].musicPlaylistShelfRenderer?.continuations?.getContinuations().orEmpty()
-                    + contents.singleColumnBrowseResultsRenderer.tabs[0].tabRenderer.content!!.sectionListRenderer!!.continuations?.getContinuations().orEmpty()
-        )
-        else -> BrowseResult(
-            items = emptyList(),
-            urlCanonical = null,
-            continuations = null
-        )
-    }.addHeader(header?.toHeader())
-
     @Serializable
     data class Contents(
         val singleColumnBrowseResultsRenderer: Tabs?,
+        val twoColumnBrowseResultsRenderer: TwoColumnBrowseResultsRenderer?,
         val sectionListRenderer: SectionListRenderer?,
+    )
+
+    @Serializable
+    data class TwoColumnBrowseResultsRenderer(
+        val tabs: List<Tabs.Tab?>?,
+        val secondaryContents: SecondaryContents?,
+    )
+
+    @Serializable
+    data class SecondaryContents(
+        val sectionListRenderer: SectionListRenderer?,
+    )
+
+    @Serializable
+    data class MusicThumbnailRenderer(
+        val thumbnail: Thumbnails?,
+        val thumbnailCrop: String?,
     )
 
     @Serializable
     data class ContinuationContents(
         val sectionListContinuation: SectionListContinuation?,
         val musicPlaylistShelfContinuation: MusicPlaylistShelfContinuation?,
+        val gridContinuation: GridContinuation?,
     ) {
         @Serializable
         data class SectionListContinuation(
@@ -60,41 +63,22 @@ data class BrowseResponse(
             val contents: List<MusicShelfRenderer.Content>,
             val continuations: List<Continuation>?,
         )
+
+        @Serializable
+        data class GridContinuation(
+            val items: List<GridRenderer.Item>,
+            val continuations: List<Continuation>?,
+        )
     }
 
     @Serializable
     data class Header(
         val musicImmersiveHeaderRenderer: MusicImmersiveHeaderRenderer?,
         val musicDetailHeaderRenderer: MusicDetailHeaderRenderer?,
+        val musicEditablePlaylistDetailHeaderRenderer: MusicEditablePlaylistDetailHeaderRenderer?,
+        val musicVisualHeaderRenderer: MusicVisualHeaderRenderer?,
+        val musicHeaderRenderer: MusicHeaderRenderer?,
     ) {
-        fun toHeader(): YTBaseItem? = when {
-            musicImmersiveHeaderRenderer != null -> ArtistHeader(
-                id = musicImmersiveHeaderRenderer.title.toString(),
-                name = musicImmersiveHeaderRenderer.title.toString(),
-                description = musicImmersiveHeaderRenderer.description?.toString(),
-                bannerThumbnails = musicImmersiveHeaderRenderer.thumbnail?.getThumbnails(),
-                shuffleEndpoint = musicImmersiveHeaderRenderer.playButton?.buttonRenderer?.navigationEndpoint,
-                radioEndpoint = musicImmersiveHeaderRenderer.startRadioButton?.buttonRenderer?.navigationEndpoint,
-            )
-            musicDetailHeaderRenderer != null -> {
-                val subtitle = musicDetailHeaderRenderer.subtitle.runs.splitBySeparator()
-                val menu = musicDetailHeaderRenderer.menu.toItemMenu()
-                AlbumOrPlaylistHeader(
-                    id = menu.playNextEndpoint?.queueAddEndpoint?.queueTarget?.playlistId
-                        ?: menu.addToQueueEndpoint?.queueAddEndpoint?.queueTarget?.playlistId!!,
-                    name = musicDetailHeaderRenderer.title.toString(),
-                    subtitle = musicDetailHeaderRenderer.subtitle.runs.drop(2).asString(),
-                    secondSubtitle = musicDetailHeaderRenderer.secondSubtitle.toString(),
-                    description = musicDetailHeaderRenderer.description?.toString(),
-                    artists = subtitle.getOrNull(1)?.oddElements(),
-                    year = subtitle.getOrNull(2)?.firstOrNull()?.text?.toIntOrNull(),
-                    thumbnails = musicDetailHeaderRenderer.thumbnail.getThumbnails(),
-                    menu = musicDetailHeaderRenderer.menu.toItemMenu()
-                )
-            }
-            else -> null
-        }
-
         @Serializable
         data class MusicImmersiveHeaderRenderer(
             val title: Runs,
@@ -113,6 +97,51 @@ data class BrowseResponse(
             val description: Runs?,
             val thumbnail: ThumbnailRenderer,
             val menu: Menu,
+        )
+
+        @Serializable
+        data class MusicEditablePlaylistDetailHeaderRenderer(
+            val header: Header,
+        ) {
+            @Serializable
+            data class Header(
+                val musicDetailHeaderRenderer: MusicDetailHeaderRenderer?,
+                val musicResponsiveHeaderRenderer: MusicHeaderRenderer?,
+            )
+        }
+
+        @Serializable
+        data class MusicVisualHeaderRenderer(
+            val title: Runs,
+            val foregroundThumbnail: ThumbnailRenderer,
+            val thumbnail: ThumbnailRenderer?,
+        )
+
+        @Serializable
+        data class Buttons(
+            val menuRenderer: Menu.MenuRenderer?,
+        )
+
+        @Serializable
+        data class MusicHeaderRenderer(
+            val buttons: List<Buttons>?,
+            val title: Runs?,
+            val thumbnail: MusicThumbnailRenderer?,
+            val subtitle: Runs?,
+            val secondSubtitle: Runs?,
+            val straplineTextOne: Runs?,
+            val straplineThumbnail: MusicThumbnailRenderer?,
+        )
+
+        @Serializable
+        data class MusicThumbnail(
+            val url: String?,
+        )
+
+        @Serializable
+        data class MusicThumbnailRenderer(
+            val musicThumbnailRenderer: BrowseResponse.MusicThumbnailRenderer,
+            val thumbnails: List<MusicThumbnail>?,
         )
     }
 

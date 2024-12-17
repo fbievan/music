@@ -1,9 +1,11 @@
 package com.zionhuang.music.db.entities
 
+import androidx.compose.runtime.Immutable
 import androidx.room.Embedded
 import androidx.room.Junction
 import androidx.room.Relation
 
+@Immutable
 data class Album(
     @Embedded
     val album: AlbumEntity,
@@ -21,4 +23,8 @@ data class Album(
 ) : LocalItem() {
     override val id: String
         get() = album.id
+    override val title: String
+        get() = album.title
+    override val thumbnailUrl: String?
+        get() = album.thumbnailUrl
 }

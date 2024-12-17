@@ -13,7 +13,7 @@ data class PlayerResponse(
     val playabilityStatus: PlayabilityStatus,
     val playerConfig: PlayerConfig?,
     val streamingData: StreamingData?,
-    val videoDetails: VideoDetails,
+    val videoDetails: VideoDetails?,
 ) {
     @Serializable
     data class PlayabilityStatus(
@@ -34,14 +34,14 @@ data class PlayerResponse(
 
     @Serializable
     data class StreamingData(
-        val formats: List<Format>,
+        val formats: List<Format>?,
         val adaptiveFormats: List<Format>,
-        val expiresInSeconds: String,
+        val expiresInSeconds: Int,
     ) {
         @Serializable
         data class Format(
             val itag: Int,
-            val url: String,
+            val url: String?,
             val mimeType: String,
             val bitrate: Int,
             val width: Int?,
@@ -55,6 +55,8 @@ data class PlayerResponse(
             val approxDurationMs: String?,
             val audioSampleRate: Int?,
             val audioChannels: Int?,
+            val loudnessDb: Double?,
+            val lastModified: Long?,
         ) {
             val isAudio: Boolean
                 get() = width == null
